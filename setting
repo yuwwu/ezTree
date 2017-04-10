@@ -1,0 +1,5 @@
+[HMMER3] /home/yuwwu/temp/hmmer-3.1b2-linux-intel-x86_64/src
+[MUSCLE] /usr/bin/muscle
+[GBLOCKS] /home/yuwwu/bin/Gblocks_0.91b
+[PRODIGAL] /home/yuwwu/bin/prodigal.v2_60
+[FASTTREE] /usr/bin/FastTree

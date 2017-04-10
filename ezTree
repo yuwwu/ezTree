@@ -1,0 +1,684 @@
+#!/usr/bin/perl -w
+use strict;
+use Cwd;
+use FindBin qw($Bin);
+use FileCache;
+
+my $PFAMDB = "$Bin/data/Pfam-A.hmm";
+my $CPU = 4;
+my $FILENUM = 100;
+my $EVALUE_CUTOFF = 1e-10;
+
+my $SETTING_FILE = "setting";
+my $HMMSCAN = "hmmscan";
+my $HMMPRESS = "hmmpress";
+my $MUSCLE = "muscle";
+my $GBLOCKS = "Gblocks";
+my $PRODIGAL = "prodigal";
+my $FASTTREE = "FastTree";
+
+checkProgram();
+
+my $USAGE = qq(ezTree - building phylogenetic trees for a set of genomes
+Usage:
+  ezTree
+    -list (list file of genomes)
+    -out (output header)
+   (Either -list or -dir is required for running ezTree)
+
+   (Other parameters)
+    [-thread (thread num; default 4)]
+    [-evalue (evalue for HMMER; default 1e-10)]
+
+  Please read README file for more details.\n);
+
+my $list_f = "";
+my $dir = "";
+my $out_f = $ARGV[1];
+my $tree_f = $ARGV[2];
+my $evalue = $ARGV[3];
+
+my $ARGC = scalar @ARGV;
+for (my $p = 0; $p < $ARGC; $p++)
+{
+	if ($ARGV[$p] eq "-list")
+	{
+		$p++;
+		$list_f = $ARGV[$p];
+	}
+	elsif ($ARGV[$p] eq "-out")
+	{
+		$p++;
+		$out_f = $ARGV[$p];
+	}
+	elsif ($ARGV[$p] eq "-thread")
+	{
+		$p++;
+		if ($ARGV[$p] > 0)
+		{
+			$CPU = $ARGV[$p];
+		}
+	}
+	elsif ($ARGV[$p] eq "-evalue")
+	{
+		$p++;
+		if ($ARGV[$p] > 0)
+		{
+			$EVALUE_CUTOFF = $ARGV[$p];
+		}
+	}
+	else
+	{
+		print "Unrecognized token \[$ARGV[$p]\]\n";
+		print $USAGE;
+		exit;
+	}
+}
+
+if ($list_f eq "" || $out_f eq "")
+{
+	print "Please input both a list file consisting of genomes and a output header.\n\n";
+	print $USAGE;
+	exit;
+}
+
+if (!(-e $PFAMDB))
+{
+	print "Did not find Pfam database--possibly first-time use of ezTree.\n";
+	print "Trying to download pfam data file from ftp://ftp.ebi.ac.uk/. Please be patient in this process...\n";
+	system("curl ftp://ftp.ebi.ac.uk/pub/databases/Pfam/releases/Pfam31.0/Pfam-A.hmm.gz > $PFAMDB.gz");
+	if (!(-e "$PFAMDB.gz"))
+	{
+		print "Cannot download pfam data from ftp://ftp.ebi.ac.uk/.\nPossible reasons include network problems or insufficient disk space.\n";
+		print "Please either download the latest hmmer file Pfam-A.hmm from ftp://ftp.ebi.ac.uk/ and put into data folder or check internet/disk space.\n";
+		exit;
+	}
+	system("gzip -d $PFAMDB.gz");
+	system("$HMMPRESS $PFAMDB 1>/dev/null 2>/dev/null");
+}
+if ((-e $PFAMDB) && !(-e "$PFAMDB.h3f"))
+{
+	print "Found hmmer file without index. Trying to build hmm index using hmmpress...\n";
+	system("$HMMPRESS $PFAMDB 1>/dev/null 2>/dev/null");
+	if (!(-e "$PFAMDB.h3f"))
+	{
+		print "Cannot build index. Possibly out-of-disk-space?\n";
+		exit;
+	}
+}
+
+getalign($list_f, $out_f);
+
+# getalign(list file, output file)
+sub getalign
+{
+	my $list_f = $_[0];
+	my $out_f = $_[1];
+	my $tree_f = "$out_f.nwk";
+	my $tmpdir = "$out_f.work";
+
+	my %filehash;
+	my $err = 0;
+	my $currfile;
+	my $currseq;
+	my %pfamhash;
+	my $pfam;
+	my %pfamname;
+	my %pfamseq;
+	my %alignseq;
+
+	my $time1;
+	my $time2;
+
+	my $cmd;
+	my $line;
+	my @arr;
+	my $i;
+	my $j;
+	my $k;
+	my $tmp;
+	my $tmp2;
+	my $f;
+	my $outf;
+	my %tmphash;
+
+	if (!(-d "$out_f.work"))
+	{
+		$cmd = "mkdir $out_f.work";
+		system($cmd);
+		if (!(-d "$out_f.work"))
+		{
+			print "Cannot open work directory for temporary use. Program stop.\n";
+			exit;
+		}
+	}
+
+	$time1 = time();
+	# predict genes for all genomes
+	open(LIST, "<$list_f") || die "Cannot open list file $list_f\n";
+	while(defined($line = <LIST>))
+	{
+		chomp($line);
+		if ($line ne "")
+		{
+			$filehash{$line} = 0;
+			if (!(-e $line))
+			{
+				print "Cannot open sequence file $line\n";
+				exit;
+			}
+			$i = checkFormat($line);
+			if (!(-e "$tmpdir/$line.hmm"))
+			{
+				if ($i == 1)
+				{
+					print "Predicting genes for $line\n";
+					$cmd = "$PRODIGAL -i $line -a $tmpdir/$line.faa -o $tmpdir/$line.tmp -p meta -q";
+					system($cmd);
+					unlink("$tmpdir/$line.tmp");
+				}
+				else
+				{
+					$cmd = "cp $line $tmpdir/$line.faa";
+					system($cmd);
+				}
+			}
+		}
+	}
+	close(LIST);
+	$time2 = time();
+	$time2 = $time2 - $time1;
+	print "$time2 seconds spent on predicting genes.\n";
+
+	$time1 = time();
+	foreach $f (keys %filehash)
+	{
+		if (-e "$tmpdir/$f.hmm")
+		{
+			# Do nothing
+		}
+		elsif (-e "$tmpdir/$f.faa" && ((-s "$tmpdir/$f.faa") > 0))
+		{
+			open(FILE, "<$tmpdir/$f.faa");
+			open(OUT, ">$tmpdir/$f.tmp");
+			$i = 1;
+			while(defined($line = <FILE>))
+			{
+				chomp($line);
+				if ($line =~ /^>/)
+				{
+					print OUT ">$f.$i\n";
+					$i++;
+				}
+				elsif ($line ne "")
+				{
+					print OUT "$line\n";
+				}
+			}
+			close(FILE);
+			close(OUT);
+
+			# Run hmmscan
+			print "Running hmmscan on $f\n";
+			$cmd = "$HMMSCAN -o $tmpdir/$f.tmp2 --tblout $tmpdir/$f.hmm --cpu $CPU -E $EVALUE_CUTOFF $PFAMDB $tmpdir/$f.tmp";
+			system($cmd);
+			unlink("$tmpdir/$f.faa");
+			rename("$tmpdir/$f.tmp", "$tmpdir/$f.faa");
+			unlink("$tmpdir/$f.tmp2");
+		}
+		else
+		{
+			print "Error predicting genes from $f\n";
+			$err = 1;
+		}
+	}
+	$time2 = time();
+	$time2 = $time2 - $time1;
+	print "$time2 seconds spent on mapping genes against PFAM.\n";
+
+	if ($err != 0)
+	{
+		print "Error occurred. Program stop.\n";
+		exit;
+	}
+
+	$time1 = time();
+	open(OUT, ">$tmpdir/$list_f.hmm");
+	foreach $f (keys %filehash)
+	{
+		open(FILE, "<$tmpdir/$f.hmm");
+		while(defined($line = <FILE>))
+		{
+			if ($line !~ /^\#/)
+			{
+				print OUT $line;
+			}
+		}
+		close(FILE);
+	}
+	close(OUT);
+
+	open(FILE, "<$tmpdir/$list_f.hmm") || die "Error running hmmscan!\n";
+	$currfile = "";
+	$currseq = "";
+	%pfamhash = ();
+	%pfamseq = ();
+	my $BEGIN = 0;
+	while(defined($line = <FILE>))
+	{
+		if ($line =~ /^\#/)
+		{
+			next;
+		}
+		chomp($line);
+		@arr = split(/[ ]+/, $line);
+		$tmp = substr($arr[2], 0, rindex($arr[2], "."));
+		if ($currfile ne $tmp || eof(FILE))
+		{
+			if ($currfile ne "")
+			{
+				if ($BEGIN == 0)
+				{
+					$BEGIN = 1;
+					foreach $pfam (keys %tmphash)
+					{
+						if ($tmphash{$pfam} == 1)
+						{
+							$pfamhash{$pfam} = 1;
+						}
+					}
+				}
+				else
+				{
+					foreach $pfam (keys %pfamhash)
+					{
+						$pfamhash{$pfam} = 0;
+					}
+					foreach $pfam (keys %tmphash)
+					{
+						if (exists $pfamhash{$pfam})
+						{
+							if ($tmphash{$pfam} == 1)
+							{
+								$pfamhash{$pfam} = 1;
+							}
+							else
+							{
+								delete($pfamhash{$pfam});
+							}
+						}
+					}
+					foreach $pfam (keys %pfamhash)
+					{
+						if ($pfamhash{$pfam} == 0)
+						{
+							delete $pfamhash{$pfam};
+						}
+					}
+					$i = scalar keys %pfamhash;
+					print "Start Processing [$currfile] remaining number of PFAMs: $i\n";
+					if ($i == 0)
+					{
+						print "Cannot find any PFAM families that exist once and only once in all genomes.\n";
+						exit;
+					}
+				}
+			}
+			else
+			{
+				print "Start Processing [$tmp]\n";
+			}
+			$currfile = $tmp;
+			#$currseq = $arr[2];
+			$currseq = "";
+			%tmphash = ();
+		}
+		if ($arr[2] ne $currseq)
+		{
+			if (exists $tmphash{$arr[1]})
+			{
+				$tmphash{$arr[1]}++;
+			}
+			else
+			{
+				$tmphash{$arr[1]} = 1;
+				if (!(exists $pfamname{$arr[1]}))
+				{
+					$tmp = $arr[0] . ", " . $arr[18];
+					$pfamname{$arr[1]} = $tmp;
+				}
+			}
+			$currseq = $arr[2];
+		}
+	}
+
+	seek(FILE, 0, 0);
+	$currseq = "";
+	while(defined($line = <FILE>))
+	{
+		if ($line =~ /^\#/)
+		{
+			next;
+		}
+		chomp($line);
+		@arr = split(/[ ]+/, $line);
+		if ($currseq ne $arr[2])
+		{
+			if (exists $pfamhash{$arr[1]})
+			{
+				$pfamseq{$arr[2]} = $arr[1];
+			}
+			$currseq = $arr[2];
+		}
+	}
+	close(FILE);
+	unlink("$tmpdir/$list_f.hmm");
+
+	$j = 0;
+	$k = scalar keys %pfamhash;
+	%tmphash = ();
+	foreach $pfam (keys %pfamhash)
+	{
+		my $file;
+		open($file, ">$tmpdir/$pfam") || die "Cannot open $pfam file for writing.\n";
+		$tmphash{$pfam} = $file;
+		$j++;
+
+		if ($j % $FILENUM == 0 || $j == $k)
+		{
+			foreach $f (keys %filehash)
+			{
+				open(FILE, "<$tmpdir/$f.faa");
+				$i = 0;
+				while(defined($line = <FILE>))
+				{
+					if ($line =~ /^>/)
+					{
+						$tmp = substr($line, 1);
+						chomp($tmp);
+						if (exists $pfamseq{$tmp} && exists $tmphash{$pfamseq{$tmp}})
+						{
+							$i = 1;
+							$outf = $tmphash{$pfamseq{$tmp}};
+							$tmp2 = substr($tmp, 0, rindex($tmp, "."));
+							print $outf ">$tmp2\n";
+						}
+						else
+						{
+							$i = 0;
+						}
+					}
+					else
+					{
+						if ($i == 1)
+						{
+							print $outf $line;
+						}
+					}
+				}
+				close(FILE);
+			}
+			foreach $f (keys %tmphash)
+			{
+				close($tmphash{$f});
+			}
+			%tmphash = ();
+		}
+	}
+
+	foreach $pfam (keys %pfamhash)
+	{
+		$cmd = "$MUSCLE -in $tmpdir/$pfam -out $tmpdir/$pfam.aln 1>/dev/null 2>/dev/null";
+		system($cmd);
+		open(FILE, "<$tmpdir/$pfam.aln");
+		while(defined($line = <FILE>))
+		{
+			chomp($line);
+			if ($line =~ /^>/)
+			{
+				$tmp = substr($line, 1);
+				$i = rindex($line, "/");
+				if ($i != -1)
+				{
+					$tmp = substr($line, $i + 1);
+				}
+				if (!(exists $alignseq{$tmp}))
+				{
+					$alignseq{$tmp} = "";
+				}
+				$currseq = $tmp;
+			}
+			else
+			{
+				$alignseq{$currseq} = $alignseq{$currseq} . $line;
+			}
+		}
+		close(FILE);
+		unlink("$tmpdir/$pfam");
+		unlink("$tmpdir/$pfam.aln");
+	}
+
+	open(OUT, ">$tmpdir/$out_f.aln");
+	foreach $currseq (keys %alignseq)
+	{
+		print OUT ">$currseq\n$alignseq{$currseq}\n";
+	}
+	close(OUT);
+
+	$cmd = "$GBLOCKS $tmpdir/$out_f.aln -t=p 1>/dev/null 2>/dev/null";
+	system($cmd);
+	rename("$tmpdir/$out_f.aln-gb", "$out_f.aln");
+	#unlink("$out_f.aln");
+	unlink("$tmpdir/$out_f.aln-gb.htm");
+
+	open(OUT, ">$out_f.pfam");
+	foreach $pfam (keys %pfamhash)
+	{
+		print OUT "$pfam\t$pfamname{$pfam}\n";
+	}
+	close(OUT);
+
+	$i = scalar keys %pfamhash;
+	print "Identified $i marker genes for the genomes.\n";
+	$time2 = time();
+	$time2 = $time2 - $time1;
+	print "$time2 seconds spent on processing mapping results.\n";
+
+	$time1 = time();
+	$cmd = "$FASTTREE $out_f.aln > $tree_f 2>/dev/null";
+	system($cmd);
+	$time2 = time();
+	$time2 = $time2 - $time1;
+	print "$time2 seconds spent on making tree.\n";
+}
+
+
+
+sub checkProgram
+{
+	my $line;
+	my $tmpstr;
+	my $tmpname = "tmp_" . time();
+
+	open(FILE, "<$Bin\/$SETTING_FILE");
+	while(defined($line = <FILE>))
+	{
+		chomp($line);
+		if ($line =~ /\[([A-Za-z0-9_]+)\] ([A-Za-z0-9._\(\)\[\]\{\}\|\$\!\=\-\+\\\/]+)/)
+		{
+			if ($1 eq "HMMER3")
+			{
+				if (-d $2 && -e "$2\/$HMMSCAN")
+				{
+					$HMMSCAN = $2 . "\/" . $HMMSCAN;
+					$HMMPRESS = $2 . "\/" . $HMMPRESS;
+				}
+			}
+			elsif ($1 eq "MUSCLE")
+			{
+				if (-d $2 && -e "$2\/$MUSCLE")
+				{
+					$MUSCLE = $2 . "\/" . $MUSCLE;
+				}
+			}
+			elsif ($1 eq "GBLOCKS")
+			{
+				if (-d $2 && -e "$2\/$GBLOCKS")
+				{
+					$GBLOCKS = $2 . "\/" . $GBLOCKS;
+				}
+			}
+			elsif ($1 eq "PRODIGAL")
+			{
+				if (-d $2 && -e "$2\/$PRODIGAL")
+				{
+					$PRODIGAL = $2 . "\/" . $PRODIGAL;
+				}
+			}
+			elsif ($1 eq "FASTTREE")
+			{
+				if (-d $2 && -e "$2\/$FASTTREE")
+				{
+					$FASTTREE = $2 . "\/" . $FASTTREE;
+				}
+			}
+		}
+	}
+	close(FILE);
+
+
+	# Check program
+	# HMMER3
+	$line = "$HMMSCAN 1>$tmpname 2>/dev/null";
+	system($line);
+	$tmpstr = "";
+	open(FILE, "<$tmpname");
+	while(<FILE>)
+	{
+		$tmpstr .= $_;
+	}
+	if ($tmpstr !~ /hmmscan/)
+	{
+		print "Cannot run HMMER3. Please indicate the file directory in \'setting\' file.\n";
+		unlink("$tmpname");
+		exit;
+	}
+	# MUSCLE
+	$line = "$MUSCLE 1>/dev/null 2>$tmpname";
+	system($line);
+	$tmpstr = "";
+	open(FILE, "<$tmpname");
+	while(<FILE>)
+	{
+		$tmpstr .= $_;
+	}
+	if ($tmpstr !~ /MUSCLE/)
+	{
+		print "Cannot run MUSCLE. Please indicate the file directory in \'setting\' file.\n";
+		unlink("$tmpname");
+		exit;
+	}
+	# GBLOCKS
+	$line = "$GBLOCKS tmp -t=p 1>$tmpname 2>/dev/null";
+	system($line);
+	$tmpstr = "";
+	open(FILE, "<$tmpname");
+	while(<FILE>)
+	{
+		$tmpstr .= $_;
+	}
+	if ($tmpstr !~ /NBRF\/PIR/)
+	{
+		print "Cannot run GBlocks. Please indicate the file directory in \'setting\' file.\n";
+		unlink("$tmpname");
+		exit;
+	}
+	# PRODIGAL
+	$line = "$PRODIGAL 1>/dev/null 2>$tmpname";
+	system($line);
+	$tmpstr = "";
+	open(FILE, "<$tmpname");
+	while(<FILE>)
+	{
+		$tmpstr .= $_;
+	}
+	if ($tmpstr !~ /PRODIGAL/)
+	{
+		print "Cannot run PRODIGAL. Please indicate the file directory in \'setting\' file.\n";
+		unlink("$tmpname");
+		exit;
+	}
+	# FASTTREE
+	$line = "$FASTTREE 1>/dev/null 2>$tmpname";
+	system($line);
+	$tmpstr = "";
+	open(FILE, "<$tmpname");
+	while(<FILE>)
+	{
+		$tmpstr .= $_;
+	}
+	if ($tmpstr !~ /FastTree/)
+	{
+		print "Cannot run Fasttree. Please indicate the file directory in \'setting\' file.\n";
+		unlink("$tmpname");
+		exit;
+	}
+
+	unlink("$tmpname");
+}
+
+
+sub checkFormat
+{
+	my $f = $_[0];
+	my $myline;
+	my $start = 0;
+	my $m;
+	my $total = 0;
+	my $ATCG = 0;
+
+	open(FILE, "<$f");
+	while(defined($myline = <FILE>))
+	{
+		chomp($myline);
+		if ($myline eq "")
+		{
+			next;
+		}
+		if ($start == 0)
+		{
+			if ($myline =~ /^>/)
+			{
+				$start = 1;
+			}
+			else
+			{
+				print "$f does not seem to be in FASTA format. Program stop.\n";
+				exit;
+			}
+		}
+		else
+		{
+			if ($myline !~ /^>/)
+			{
+				$m = length($myline);
+				$total += $m;
+				$myline =~ s/[ATCGatcg]//g;
+				$m = $m - length($myline);
+				$ATCG += $m;
+			}
+		}
+	}
+	close(FILE);
+
+	$m = $ATCG / $total;
+	if ($m > 0.8)
+	{
+		return 1;
+	}
+	else
+	{
+		return 2;
+	}
+}
+
