@@ -4,7 +4,7 @@ use Cwd;
 use FindBin qw($Bin);
 use FileCache;
 
-my $PFAMDB = "$Bin/data";
+my $PFAMDB_PATH = "$Bin/data";
 my $PFAMDB = "$Bin/data/Pfam-A.hmm";
 my $CPU = 4;
 my $FILENUM = 100;
