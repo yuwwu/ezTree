@@ -14,9 +14,11 @@ This script needs the following additional software tools.
   -Prodigal
   -FastTree
 
+***
 (If you already have the software installed in your system and have put them in system path, ezTree will attempt to run them directly. It will only complain that it cannot find the software if the software cannot be executed.)
 
 (You can try running ezTree first, which will tell you what software are missing)
+***
 
 Installation guide:
   - HMMER3
