@@ -4,6 +4,7 @@ use Cwd;
 use FindBin qw($Bin);
 use FileCache;
 
+my $PFAMDB = "$Bin/data";
 my $PFAMDB = "$Bin/data/Pfam-A.hmm";
 my $CPU = 4;
 my $FILENUM = 100;
@@ -86,6 +87,10 @@ if (!(-e $PFAMDB))
 {
 	print "Did not find Pfam database--possibly first-time use of ezTree.\n";
 	print "Trying to download pfam data file from ftp://ftp.ebi.ac.uk/. Please be patient in this process...\n";
+	if (!(-d $PFAMDB_PATH))
+	{
+		mkdir($PFAMDB_PATH);
+	}
 	system("curl ftp://ftp.ebi.ac.uk/pub/databases/Pfam/releases/Pfam31.0/Pfam-A.hmm.gz > $PFAMDB.gz");
 	if (!(-e "$PFAMDB.gz"))
 	{
