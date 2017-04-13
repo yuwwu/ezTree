@@ -25,10 +25,9 @@ Installation guide:
     * Download the latest distribution from http://hmmer.org/. Assuming that we get version 3.1b2.
     * Unzip the tar.gz file using "tar zxvf hmmer-3.1b2-linux-intel-x86_64.tar.gz
     * cd (hmmer folder)
-    * ./configure
-    * make
-    * cd src;pwd
+    * cd binaries;pwd
     * Copy the path and enter it in the HMMER3 field of the "setting" file
+    * (If source files are downloaded instead of binaries then one can issue "./configure" then "make" to build the hmmer executables)
 
   - muscle
     * Download the latest distribution from http://www.drive5.com/muscle/downloads.htm. Assuming that we get version 3.8.31.
