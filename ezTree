@@ -166,25 +166,34 @@ sub getalign
 		chomp($line);
 		if ($line ne "")
 		{
-			$filehash{$line} = 0;
 			if (!(-e $line))
 			{
 				print "Cannot open sequence file $line\n";
 				exit;
 			}
+			$i = rindex($line, "/");
+			if ($i == -1)
+			{
+				$tmp = $line;
+			}
+			else
+			{
+				$tmp = substr($line, $i + 1);
+			}
+			$filehash{$tmp} = 0;
 			$i = checkFormat($line);
 			if (!(-e "$tmpdir/$line.hmm"))
 			{
 				if ($i == 1)
 				{
 					print "Predicting genes for $line\n";
-					$cmd = "$PRODIGAL -i $line -a $tmpdir/$line.faa -o $tmpdir/$line.tmp -p meta -q";
+					$cmd = "$PRODIGAL -i $line -a $tmpdir/$tmp.faa -o $tmpdir/$tmp.tmp -p meta -q";
 					system($cmd);
-					unlink("$tmpdir/$line.tmp");
+					unlink("$tmpdir/$tmp.tmp");
 				}
 				else
 				{
-					$cmd = "cp $line $tmpdir/$line.faa";
+					$cmd = "cp $line $tmpdir/$tmp.faa";
 					system($cmd);
 				}
 			}
