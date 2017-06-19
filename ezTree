@@ -21,6 +21,7 @@ my $FASTTREE = "FastTree";
 checkProgram();
 
 my $USAGE = qq(ezTree - building phylogenetic trees for a set of genomes
+version 0.1
 Usage:
   ezTree
     -list (list file of genomes)
@@ -30,14 +31,15 @@ Usage:
    (Other parameters)
     [-thread (thread num; default 4)]
     [-evalue (evalue for HMMER; default 1e-10)]
+    [-model (JTT, WAG, or LG evolutionary models; default JTT)]
 
   Please read README file for more details.\n);
 
 my $list_f = "";
 my $dir = "";
-my $out_f = $ARGV[1];
-my $tree_f = $ARGV[2];
-my $evalue = $ARGV[3];
+my $out_f;
+my $tree_f;
+my $model = "";
 
 my $ARGC = scalar @ARGV;
 for (my $p = 0; $p < $ARGC; $p++)
@@ -66,6 +68,27 @@ for (my $p = 0; $p < $ARGC; $p++)
 		if ($ARGV[$p] > 0)
 		{
 			$EVALUE_CUTOFF = $ARGV[$p];
+		}
+	}
+	elsif ($ARGV[$p] eq "-model")
+	{
+		$p++;
+		if ($ARGV[$p] eq "JTT")
+		{
+			$model = "";
+		}
+		elsif ($ARGV[$p] eq "WAG")
+		{
+			$model = "-wag";
+		}
+		elsif ($ARGV[$p] eq "LG")
+		{
+			$model = "-lg";
+		}
+		else
+		{
+			print "Evolutionary models can be only one of the three options: JTT, WAG, or LG.\n";
+			exit;
 		}
 	}
 	else
@@ -499,7 +522,7 @@ sub getalign
 	print "$time2 seconds spent on processing mapping results.\n";
 
 	$time1 = time();
-	$cmd = "$FASTTREE $out_f.aln > $tree_f 2>/dev/null";
+	$cmd = "$FASTTREE $model $out_f.aln > $tree_f 2>/dev/null";
 	system($cmd);
 	$time2 = time();
 	$time2 = $time2 - $time1;

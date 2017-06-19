@@ -1,4 +1,5 @@
 ezTree README
+Version 0.1
 
 Yu-Wei Wu (yuwei.wu@tmu.edu.tw)
 Graduate Institute of Biomedical Informatics, Taipei Medical University
